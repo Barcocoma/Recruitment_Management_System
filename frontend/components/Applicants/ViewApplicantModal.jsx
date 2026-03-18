@@ -100,10 +100,11 @@ export const ViewApplicantModal = ({ applicant, isOpen, onClose }) => {
                 <div className="text-xs font-semibold text-slate-500 uppercase mb-1">Status</div>
                 <div className="flex items-center gap-2">
                   <div className={`w-2 h-2 rounded-full ${
-                    applicant.status === 'Ready to Hire' || applicant.status === 'Hired' ? 'bg-emerald-500' : 
-                    applicant.status === 'Shortlisted' || applicant.status === 'AI Shortlisted' ? 'bg-blue-500' :
-                    applicant.status === 'Under Review' ? 'bg-amber-500' :
-                    applicant.status === 'Rejected' ? 'bg-red-500' :
+                    applicant.status === 'Highly Qualified' || applicant.status === 'Hired' ? 'bg-emerald-500' : 
+                    applicant.status === 'Qualified' || applicant.status === 'Shortlisted' ? 'bg-blue-500' :
+                    applicant.status === 'Needs Review' ? 'bg-amber-500' :
+                    applicant.status === 'Not Qualified' || applicant.status === 'Rejected' ? 'bg-red-500' :
+                    applicant.status === 'Pending Analysis' ? 'bg-slate-400' :
                     'bg-slate-400'
                   }`}></div>
                   <span className="text-sm font-medium text-slate-900">{applicant.status || 'N/A'}</span>

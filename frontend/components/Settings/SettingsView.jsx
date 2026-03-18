@@ -4,6 +4,7 @@ import { api } from '../../lib/api';
 
 export const SettingsView = ({ onSettingsUpdate }) => {
   const [threshold, setThreshold] = useState(70);
+  const [instructionsText, setInstructionsText] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
@@ -18,6 +19,7 @@ export const SettingsView = ({ onSettingsUpdate }) => {
       setLoading(true);
       const settings = await api.getSettings();
       setThreshold(settings.ai_score_threshold || 70);
+      setInstructionsText(settings.instructions_text || '');
       setError(null);
     } catch (err) {
       console.error('Failed to load settings:', err);
@@ -38,7 +40,10 @@ export const SettingsView = ({ onSettingsUpdate }) => {
       setError(null);
       setSuccess(false);
       
-      await api.updateSettings({ ai_score_threshold: threshold });
+      await api.updateSettings({ 
+        ai_score_threshold: threshold,
+        instructions_text: instructionsText 
+      });
       setSuccess(true);
       
       // Reload settings from server to ensure we have the latest value
@@ -108,7 +113,7 @@ export const SettingsView = ({ onSettingsUpdate }) => {
               AI Score Passing Threshold (%)
             </label>
             <p className="text-xs text-slate-500 mb-4">
-              Resumes with an AI score equal to or above this threshold will be considered "AI Shortlisted".
+              Resumes with an AI score equal to or above this threshold will be marked as "Qualified".
               Current threshold: <span className="font-bold text-indigo-600">{threshold}%</span>
             </p>
             
@@ -143,8 +148,24 @@ export const SettingsView = ({ onSettingsUpdate }) => {
               </div>
               <div className="flex items-center gap-2">
                 <div className="w-3 h-3 rounded-full bg-indigo-500"></div>
-                <span>{threshold}%+ - AI Shortlisted</span>
+                <span>{threshold}%+ - Qualified</span>
               </div>
+            </div>
+
+            <div className="pt-6 border-t border-slate-200">
+              <label className="block text-sm font-bold text-slate-700 mb-2">
+                Instructions Text for Applicants
+              </label>
+              <p className="text-xs text-slate-500 mb-4">
+                These instructions will be considered when evaluating applicants who don't have much experience but know the tools, and also for those with no skills. This helps guide the AI scoring process.
+              </p>
+              <textarea
+                value={instructionsText}
+                onChange={(e) => setInstructionsText(e.target.value)}
+                rows={6}
+                placeholder="Example: Consider applicants who may not have extensive experience but demonstrate knowledge of the required tools. Also consider candidates with no skills but show potential and willingness to learn..."
+                className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 resize-none text-sm"
+              />
             </div>
           </div>
 
@@ -166,7 +187,7 @@ export const SettingsView = ({ onSettingsUpdate }) => {
         <ul className="space-y-2 text-sm text-blue-800">
           <li className="flex items-start gap-2">
             <span className="font-bold">•</span>
-            <span>The AI Score threshold determines which resumes are automatically considered "AI Shortlisted".</span>
+            <span>The AI Score threshold determines which resumes are automatically marked as "Qualified".</span>
           </li>
           <li className="flex items-start gap-2">
             <span className="font-bold">•</span>

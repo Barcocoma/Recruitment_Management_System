@@ -140,7 +140,7 @@ def analyze_resume_content(resume_text: str, job_description: Optional[str] = No
 
 
 @function_tool
-def score_resume_match(resume_analysis: str, job_requirements: str, job_description: str) -> str:
+def score_resume_match(resume_analysis: str, job_requirements: str, job_description: str, instructions_text: str = '') -> str:
     """Score how well a resume matches a job posting.
     
     This tool evaluates the resume analysis against job requirements and returns a score.
@@ -149,6 +149,7 @@ def score_resume_match(resume_analysis: str, job_requirements: str, job_descript
         resume_analysis: JSON string containing resume analysis results
         job_requirements: Required skills and qualifications for the job
         job_description: Full job description
+        instructions_text: Optional custom instructions for evaluating applicants (e.g., consider those with limited experience but tool knowledge, or those with no skills but show potential)
         
     Returns:
         JSON string containing score (0-100) and detailed breakdown
@@ -244,7 +245,33 @@ def score_resume_match(resume_analysis: str, job_requirements: str, job_descript
     print(f"   Skill Score: {skill_score}/60")
     
     # Score based on experience (40 points - increased since no base score)
-    # Assume 3+ years is good
+    # Apply instructions_text guidance for limited experience but tool knowledge
+    instructions_lower = instructions_text.lower() if instructions_text else ''
+    consider_limited_experience = 'limited experience' in instructions_lower or 'no experience' in instructions_lower or 'tool knowledge' in instructions_lower or 'tools' in instructions_lower
+    consider_no_skills = 'no skills' in instructions_lower or 'potential' in instructions_lower or 'willingness to learn' in instructions_lower
+    
+    # Adjust scoring based on instructions
+    experience_bonus = 0
+    skill_bonus = 0
+    instruction_note = ""
+    
+    # If instructions mention considering limited experience but tool knowledge
+    if consider_limited_experience and experience_years < 3:
+        # Give bonus if applicant has tool knowledge (skills) even with limited experience
+        if len(resume_skills) > 0:
+            experience_bonus = min(15, experience_years * 5)  # Up to 15 bonus points
+            instruction_note = "Bonus applied: Limited experience but demonstrates tool knowledge (per instructions). "
+            print(f"   📝 Instruction applied: Limited experience bonus (+{experience_bonus} points) for tool knowledge")
+    
+    # If instructions mention considering applicants with no skills but potential
+    if consider_no_skills and len(resume_skills) == 0:
+        # Give small base score if instructions say to consider potential
+        if 'potential' in instructions_lower or 'willingness to learn' in instructions_lower:
+            skill_bonus = 10  # Small bonus for potential
+            instruction_note += "Bonus applied: No skills but shows potential (per instructions). "
+            print(f"   📝 Instruction applied: Potential bonus (+{skill_bonus} points) for showing potential")
+    
+    # Base experience scoring
     if experience_years >= 3:
         score += 40
         experience_score_breakdown = 40
@@ -257,10 +284,21 @@ def score_resume_match(resume_analysis: str, job_requirements: str, job_descript
         experience_score_breakdown = 0
         experience_assessment = "Limited - No significant professional experience detected"
     
+    # Apply bonuses from instructions (but do NOT forcibly set score to threshold;
+    # we keep the raw AI score so you can still see if it's 5%, 20%, etc.)
+    score += experience_bonus + skill_bonus
+    if experience_bonus > 0:
+        experience_score_breakdown += experience_bonus
+    if skill_bonus > 0:
+        skill_score += skill_bonus
+    
     # NO BASE SCORE - removed as per user request
     # Just submitting a resume doesn't give points anymore
     base_score = 0
-    print("   ℹ️  No base score - scoring based only on skills and experience")
+    if instructions_text:
+        print(f"   ℹ️  Using custom instructions for scoring guidance")
+    else:
+        print("   ℹ️  No base score - scoring based only on skills and experience")
     
     # Ensure score is between 0-100
     score = min(100, max(0, int(score)))
@@ -271,67 +309,110 @@ def score_resume_match(resume_analysis: str, job_requirements: str, job_descript
     # Generate detailed explanation
     explanation_parts = []
     
-    # Skills explanation
+    # Skills explanation (plain paragraph style)
     if len(required_skills_list) > 0:
         if skill_matches > 0:
             explanation_parts.append(
-                f"✅ **Skills Match ({skill_score}/60 points)**: "
-                f"The resume matches {skill_matches} out of {len(required_skills_list)} required skills ({skill_percentage:.1f}% match). "
-                f"Matched skills: {', '.join(matched_skills[:5])}" + 
-                (f" and {len(matched_skills) - 5} more" if len(matched_skills) > 5 else "") + ". "
+                f"Skills match ({skill_score}/60 points): the resume matches {skill_matches} out of {len(required_skills_list)} required skills "
+                f"({skill_percentage:.1f}% match). Matched skills include {', '.join(matched_skills[:5])}"
+                + (f" and {len(matched_skills) - 5} more." if len(matched_skills) > 5 else ". ")
             )
             if missing_skills:
                 explanation_parts.append(
-                    f"⚠️ **Missing Skills**: The resume is missing {len(missing_skills)} required skill(s): "
-                    f"{', '.join(missing_skills[:5])}" + 
-                    (f" and {len(missing_skills) - 5} more" if len(missing_skills) > 5 else "") + ". "
+                    f"The resume is missing {len(missing_skills)} required skill(s): "
+                    f"{', '.join(missing_skills[:5])}"
+                    + (f" and {len(missing_skills) - 5} more. " if len(missing_skills) > 5 else ". ")
                 )
         else:
             explanation_parts.append(
-                f"❌ **Skills Match (0/60 points)**: "
-                f"No matching skills found. The resume does not contain any of the required skills: "
-                f"{', '.join(required_skills_list[:5])}" + 
-                (f" and {len(required_skills_list) - 5} more" if len(required_skills_list) > 5 else "") + ". "
+                "Skills match (0/60 points): no matching skills were found. "
+                "The resume does not contain any of the main required skills such as "
+                f"{', '.join(required_skills_list[:5])}"
+                + (f" and {len(required_skills_list) - 5} more. " if len(required_skills_list) > 5 else ". ")
             )
     else:
         if len(resume_skills) > 0:
             explanation_parts.append(
-                f"ℹ️ **Skills Match ({skill_score}/60 points)**: "
-                f"No specific skills were required for this position, but the resume shows {len(resume_skills)} skill(s). "
-                f"Partial credit given for having relevant skills. "
+                f"Skills match ({skill_score}/60 points): no specific skills were required for this position, "
+                f"but the resume shows {len(resume_skills)} relevant skill(s), so partial credit is given. "
             )
         else:
             explanation_parts.append(
-                f"❌ **Skills Match (0/60 points)**: "
-                f"No skills detected in the resume. "
+                "Skills match (0/60 points): no technical skills were detected in the resume. "
             )
     
     # Experience explanation
-    explanation_parts.append(
-        f"📊 **Experience ({experience_score_breakdown}/40 points)**: "
-        f"{experience_assessment}. "
-    )
+    experience_explanation = f"Experience ({experience_score_breakdown}/40 points): {experience_assessment}."
+    if experience_bonus > 0:
+        experience_explanation += f" {instruction_note}"
+    explanation_parts.append(experience_explanation + " ")
     
-    # Overall assessment
-    if score >= 70:
+    # Add instruction note if applicable
+    if instruction_note and (experience_bonus > 0 or skill_bonus > 0):
         explanation_parts.append(
-            f"🎯 **Overall Assessment**: This resume demonstrates a strong match with the job requirements. "
-            f"The candidate has relevant skills and sufficient experience. "
+            f"Scoring guidance applied: custom instructions were used to adjust the score. "
+        )
+    
+    # Overall assessment with status explanation
+    if score >= 90:
+        explanation_parts.append(
+            "Overall assessment: this resume demonstrates an exceptional match with the job requirements. "
+            "The candidate has excellent skills and extensive experience for the role. "
+        )
+        explanation_parts.append(
+            f"STATUS: HIGHLY QUALIFIED - The candidate achieved a score of {score}% which is 90% or above. "
+            "This indicates an outstanding fit for the position with all key requirements met or exceeded. "
+            "This applicant is highly recommended for immediate consideration. "
+        )
+    elif score >= 70:
+        explanation_parts.append(
+            "Overall assessment: this resume demonstrates a strong match with the job requirements. "
+            "The candidate has relevant skills and sufficient experience for the role. "
+        )
+        explanation_parts.append(
+            f"STATUS: QUALIFIED - The candidate achieved a score of {score}% which meets the passing threshold. "
+            "This indicates a good fit for the position with most key requirements satisfied. "
+            "This applicant is recommended for further review and potential interview. "
         )
     elif score >= 50:
         explanation_parts.append(
-            f"📋 **Overall Assessment**: This resume shows a moderate match. "
-            f"The candidate has some relevant qualifications but may be missing key skills or experience. "
+            "Overall assessment: this resume shows a moderate match. "
+            "The candidate has some relevant qualifications but may be missing key skills or experience. "
+        )
+        explanation_parts.append(
+            f"STATUS: MODERATE MATCH - The candidate achieved a score of {score}%. "
+            "This score indicates the candidate meets some of the key requirements but has gaps in other areas. "
+            "The final status depends on your configured passing threshold. "
         )
     elif score > 0:
         explanation_parts.append(
-            f"⚠️ **Overall Assessment**: This resume shows a weak match. "
-            f"Significant gaps exist in required skills or experience. "
+            "Overall assessment: this resume shows a weak match. "
+            "There are significant gaps in the required skills or experience. "
         )
+        # Check if instructions_text exists to determine the actual status
+        has_instructions = bool(instructions_text and instructions_text.strip())
+        if has_instructions:
+            explanation_parts.append(
+                f"STATUS: NEEDS REVIEW - The candidate achieved a score of {score}% which is below the passing threshold. "
+                "The low score is due to insufficient matching skills and/or lack of relevant experience. "
+                "This applicant is marked as 'Needs Review' for manual evaluation based on your scoring guidelines. "
+                "Please review the candidate's profile to determine if they have potential worth considering. "
+            )
+        else:
+            explanation_parts.append(
+                f"STATUS: NOT QUALIFIED - The candidate achieved a score of {score}% which is below the passing threshold. "
+                "The low score is due to insufficient matching skills and/or lack of relevant experience. "
+                "This applicant does not meet the minimum requirements for the position. "
+            )
     else:
         explanation_parts.append(
-            f"❌ **Overall Assessment**: This resume does not meet the basic requirements. "
-            f"No skills or experience were detected. "
+            "Overall assessment: this resume does not meet the basic requirements. "
+            "No relevant skills or experience were detected. "
+        )
+        explanation_parts.append(
+            "STATUS: NOT QUALIFIED - The candidate achieved a score of 0% because no matching skills or relevant experience were found in the resume. "
+            "This could be due to an empty/unreadable resume file, or the candidate's background does not align with the job requirements at all. "
+            "This applicant is not recommended for this position. "
         )
     
     # Recommendations
@@ -343,7 +424,7 @@ def score_resume_match(resume_analysis: str, job_requirements: str, job_descript
             recommendations.append(f"Increase experience level (currently {experience_years} year(s), target: 3+ years")
         if recommendations:
             explanation_parts.append(
-                f"💡 **Recommendations**: " + " | ".join(recommendations) + ". "
+                "Recommendations: " + "; ".join(recommendations) + ". "
             )
     
     detailed_explanation = "".join(explanation_parts)

@@ -18,11 +18,14 @@ def score_node(state: ScorerState) -> ScorerState:
     resume_analysis = state.get('resume_analysis', '{}')
     job_description = state.get('job_description', '')
     job_requirements = state.get('job_requirements', '')
+    instructions_text = state.get('instructions_text', '')
     
     print(f"🎯 Score Node: Calculating resume match score...")
+    if instructions_text:
+        print(f"   Using custom instructions for scoring guidance")
     
     # Score using the tool
-    score_result = score_resume_match(resume_analysis, job_requirements, job_description)
+    score_result = score_resume_match(resume_analysis, job_requirements, job_description, instructions_text)
     
     # Extract the score from the result
     try:

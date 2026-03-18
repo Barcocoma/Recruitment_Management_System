@@ -9,6 +9,7 @@ class ScorerState(TypedDict):
     job_id: Optional[str]
     job_description: str
     job_requirements: str
+    instructions_text: Optional[str]
     score_result: Optional[str]
     ai_score: Optional[int]
     step: str

@@ -44,7 +44,8 @@ def create_scorer_workflow() -> StateGraph:
 
 
 def run_scorer_workflow(resume_analysis: str, job_description: str, 
-                       job_requirements: str, job_id: str = None) -> dict:
+                       job_requirements: str, job_id: str = None, 
+                       instructions_text: str = '') -> dict:
     """
     Execute the resume scorer workflow.
     
@@ -53,6 +54,7 @@ def run_scorer_workflow(resume_analysis: str, job_description: str,
         job_description: Full job description
         job_requirements: Required skills and qualifications
         job_id: Optional job ID
+        instructions_text: Optional custom instructions for scoring guidance
         
     Returns:
         dict: The final state with scoring results
@@ -73,6 +75,7 @@ def run_scorer_workflow(resume_analysis: str, job_description: str,
         "job_id": job_id,
         "job_description": job_description,
         "job_requirements": job_requirements,
+        "instructions_text": instructions_text,
         "score_result": None,
         "ai_score": None,
         "step": "started",

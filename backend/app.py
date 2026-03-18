@@ -22,8 +22,16 @@ UPLOAD_FOLDER = 'uploads'
 ALLOWED_EXTENSIONS = {'pdf', 'docx', 'doc'}
 MAX_FILE_SIZE = 5 * 1024 * 1024  # 5MB
 
-# Create uploads directory if it doesn't exist
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+# Create uploads directory only if R2 is not configured (local storage fallback)
+if not r2_storage.is_configured():
+    os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+    print("📁 R2 not configured - using local uploads folder")
+else:
+    print("☁️  R2 configured - using cloud storage")
+
+# Temp directory for processing files from R2
+import tempfile
+TEMP_DIR = tempfile.gettempdir()
 
 def get_file_path(resume_path):
     """
@@ -36,16 +44,15 @@ def get_file_path(resume_path):
     # Try R2 first if configured
     if r2_storage.is_configured():
         if r2_storage.file_exists(resume_path):
-            # Download from R2 to temp local file for processing
+            # Download from R2 to system temp directory for processing (not uploads folder)
             result = r2_storage.download_file(resume_path)
             if result['success']:
-                temp_path = os.path.join(UPLOAD_FOLDER, resume_path)
-                os.makedirs(os.path.dirname(temp_path), exist_ok=True)
+                temp_path = os.path.join(TEMP_DIR, f"r2_temp_{resume_path}")
                 with open(temp_path, 'wb') as f:
                     f.write(result['data'])
                 return temp_path
     
-    # Fallback to local storage
+    # Fallback to local storage (only if R2 not configured)
     local_path = os.path.join(UPLOAD_FOLDER, resume_path)
     if os.path.exists(local_path):
         return local_path
@@ -131,7 +138,7 @@ def init_database():
                 job_title VARCHAR(255),
                 date_applied DATE,
                 ai_score INTEGER DEFAULT 0,
-                status VARCHAR(100) DEFAULT 'New',
+                status VARCHAR(100) DEFAULT 'Pending Analysis',
                 resume_name VARCHAR(255),
                 resume_path TEXT,
                 cover_letter TEXT,
@@ -186,10 +193,24 @@ def init_database():
                 id VARCHAR(36) PRIMARY KEY,
                 user_id VARCHAR(36) NOT NULL UNIQUE,
                 ai_score_threshold INTEGER DEFAULT 70,
+                instructions_text TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             )
+        """)
+        
+        # Add instructions_text column if it doesn't exist (for existing databases)
+        cursor.execute("""
+            DO $$ 
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns 
+                    WHERE table_name = 'settings' AND column_name = 'instructions_text'
+                ) THEN
+                    ALTER TABLE settings ADD COLUMN instructions_text TEXT;
+                END IF;
+            END $$;
         """)
         
         # Create index for settings.user_id
@@ -290,9 +311,9 @@ def get_ai_score_threshold(user_id):
             try:
                 insert_cursor = connection.cursor()
                 insert_cursor.execute("""
-                    INSERT INTO settings (id, user_id, ai_score_threshold)
-                    VALUES (%s, %s, %s)
-                """, (str(uuid.uuid4()), user_id, 70))
+                    INSERT INTO settings (id, user_id, ai_score_threshold, instructions_text)
+                    VALUES (%s, %s, %s, %s)
+                """, (str(uuid.uuid4()), user_id, 70, ''))
                 connection.commit()
                 insert_cursor.close()
                 connection.close()
@@ -306,6 +327,49 @@ def get_ai_score_threshold(user_id):
             cursor.close()
             connection.close()
         return 70
+
+# Helper function to get instructions text for a user (default: empty string)
+def get_instructions_text(user_id):
+    """Get the instructions text for a user, defaulting to empty string if not set."""
+    if not user_id:
+        return ''
+    
+    connection = get_db_connection()
+    if not connection:
+        return ''
+    
+    try:
+        cursor = connection.cursor()
+        cursor.execute('SELECT instructions_text FROM settings WHERE user_id = %s', (user_id,))
+        result = cursor.fetchone()
+        
+        if result:
+            instructions = result[0] if result[0] else ''
+            cursor.close()
+            connection.close()
+            return instructions
+        else:
+            # Create default settings for user if doesn't exist
+            cursor.close()
+            try:
+                insert_cursor = connection.cursor()
+                insert_cursor.execute("""
+                    INSERT INTO settings (id, user_id, ai_score_threshold, instructions_text)
+                    VALUES (%s, %s, %s, %s)
+                """, (str(uuid.uuid4()), user_id, 70, ''))
+                connection.commit()
+                insert_cursor.close()
+                connection.close()
+            except Exception as e:
+                print(f"Error creating default settings: {e}")
+                connection.close()
+            return ''
+    except Error as e:
+        print(f"Error getting instructions text: {e}")
+        if connection:
+            cursor.close()
+            connection.close()
+        return ''
 
 # Jobs Routes
 @app.route('/api/jobs', methods=['GET'])
@@ -552,6 +616,11 @@ def get_applicants():
         update_cursor = connection.cursor()
         updated_count = 0
         threshold = get_ai_score_threshold(user_id)
+        # Check if user has custom instructions configured.
+        # If instructions are empty, we treat low AI scores as "Not Qualified"
+        # instead of "Needs Review".
+        instructions_text = get_instructions_text(user_id)
+        has_custom_instructions = bool(instructions_text and instructions_text.strip())
         
         # Always update statuses for all filters (including "new")
         # This ensures applicants appear in multiple tabs if they qualify
@@ -575,25 +644,25 @@ def get_applicants():
                 # not based on status, so we can update status and they'll still appear in "New Applicants" tab
                 # if they were created today
                 
-                # Determine what status should be based on AI score
-                # Always update status - no "New" status anymore
+                # Determine what status should be based on AI score with clear logic
+                # If there are custom instructions, any positive score below the threshold
+                # becomes "Needs Review" (para alam mong i-review yung borderline cases).
+                # Kapag walang instructions, low scores should simply be "Not Qualified".
                 if ai_score > 0:
                     if ai_score >= 90:
-                        expected_status = 'Ready to Hire'  # Excellent match
+                        expected_status = 'Highly Qualified'  # Excellent match (90-100): Top candidate, meets all requirements
                     elif ai_score >= threshold:
-                        expected_status = 'AI Shortlisted'  # Passed threshold
-                    elif ai_score >= 50:
-                        expected_status = 'Under Review'  # Moderate match
+                        expected_status = 'Qualified'  # Good match (threshold-89): Meets requirements, good fit
                     else:
-                        expected_status = 'Rejected'  # Weak match
+                        expected_status = 'Needs Review' if has_custom_instructions else 'Not Qualified'
                 else:
-                    # If no AI score yet (not analyzed), set to "Under Review" instead of "New"
-                    expected_status = 'Under Review'
+                    # If no AI score yet (not analyzed) or 0 score, set to "Not Qualified" or "Pending Analysis"
+                    expected_status = 'Not Qualified'
                 
                 # Only update auto-assigned statuses (don't overwrite manual statuses)
-                # Auto-statuses: 'Under Review', 'AI Shortlisted', 'Rejected', 'Ready to Hire' (no "New" status)
-                # Manual statuses: 'Shortlisted', 'Hired' (these are set by HR manually)
-                manual_statuses = ['Shortlisted', 'Hired']
+                # Auto-statuses: 'Pending Analysis', 'Qualified', 'Highly Qualified', 'Needs Review', 'Not Qualified'
+                # Manual statuses: 'Shortlisted', 'Rejected', 'Hired' (these are set by HR manually)
+                manual_statuses = ['Shortlisted', 'Rejected', 'Hired']
                 
                 # Update if:
                 # 1. Current status is NOT a manual status (can be auto-updated)
@@ -632,9 +701,14 @@ def get_applicants():
                 # Just add them all (no need to filter again)
                 filtered_applicants.append(applicant)
             elif filter_type == 'shortlisted':
-                # "AI Shortlisted" filter: Show if AI score >= threshold OR shortlisted statuses
-                is_shortlisted_status = current_status in ['Shortlisted', 'AI Shortlisted', 'Ready to Hire', 'Under Review']
-                if ai_score >= threshold or is_shortlisted_status:
+                # "Qualified Applicants" filter:
+                # 1) AI score >= threshold (normal qualified)
+                # 2) Qualified / Highly Qualified / Shortlisted statuses
+                # 3) (Optional) Needs Review BUT has any AI score > 0 (meaning: low score but has some skills / analysis).
+                #    This only applies when the user has custom instructions configured.
+                is_qualified_status = current_status in ['Qualified', 'Highly Qualified', 'Shortlisted']
+                is_needs_review_with_ai = has_custom_instructions and current_status == 'Needs Review' and ai_score > 0
+                if ai_score >= threshold or is_qualified_status or is_needs_review_with_ai:
                     filtered_applicants.append(applicant)
             elif filter_type == 'total':
                 # "Total Applicants" filter: Show all applicants (no status filter)
@@ -699,18 +773,32 @@ def get_applicant_stats():
         cursor.execute("SELECT COUNT(*) as count FROM applicants WHERE user_id = %s AND date_applied >= %s", (user_id, today))
         new_count = cursor.fetchone()[0]
         
-        cursor.execute("SELECT COUNT(*) as count FROM applicants WHERE user_id = %s AND status IN ('Shortlisted', 'AI Shortlisted', 'Ready to Hire')", (user_id,))
+        cursor.execute("SELECT COUNT(*) as count FROM applicants WHERE user_id = %s AND status IN ('Shortlisted', 'Qualified', 'Highly Qualified')", (user_id,))
         shortlisted = cursor.fetchone()[0]
         
         # AI Shortlisted: Count applicants with AI score >= threshold (configurable)
-        # OR manually shortlisted statuses (matches the filter logic)
-        # Includes "Under Review" status as they should appear in AI Shortlisted tab
+        # OR qualified statuses. Optionally include "Needs Review" with AI score > 0
+        # only when the user has custom instructions configured (same behaviour as listing).
         threshold = get_ai_score_threshold(user_id)
-        cursor.execute("""
-            SELECT COUNT(*) as count FROM applicants 
-            WHERE user_id = %s 
-            AND (ai_score >= %s OR status IN ('Shortlisted', 'AI Shortlisted', 'Ready to Hire', 'Under Review'))
-        """, (user_id, threshold))
+        instructions_text = get_instructions_text(user_id)
+        has_custom_instructions = bool(instructions_text and instructions_text.strip())
+
+        if has_custom_instructions:
+            cursor.execute("""
+                SELECT COUNT(*) as count FROM applicants 
+                WHERE user_id = %s 
+                AND (ai_score >= %s 
+                     OR status IN ('Qualified', 'Highly Qualified', 'Shortlisted')
+                     OR (status = 'Needs Review' AND ai_score > 0))
+            """, (user_id, threshold))
+        else:
+            cursor.execute("""
+                SELECT COUNT(*) as count FROM applicants 
+                WHERE user_id = %s 
+                AND (ai_score >= %s 
+                     OR status IN ('Qualified', 'Highly Qualified', 'Shortlisted'))
+            """, (user_id, threshold))
+
         ai_shortlisted = cursor.fetchone()[0]
         
         return jsonify({
@@ -758,11 +846,14 @@ def get_applicant(applicant_id):
                         )
                         
                         if analyzer_result.get('analysis_result'):
+                            # Get instructions_text from settings
+                            instructions_text = get_instructions_text(applicant.get('user_id'))
                             scorer_result = run_scorer_workflow(
                                 resume_analysis=analyzer_result['analysis_result'],
                                 job_description=job.get('description', '') or '',
                                 job_requirements=job.get('required_skills', '') or '',
-                                job_id=applicant.get('job_id')
+                                job_id=applicant.get('job_id'),
+                                instructions_text=instructions_text
                             )
                             
                             try:
@@ -864,11 +955,14 @@ def create_applicant():
                     
                     # Step 2: Run Resume Scorer Workflow if analysis succeeded
                     if analyzer_result.get('analysis_result'):
+                        # Get instructions_text from settings
+                        instructions_text = get_instructions_text(user_id)
                         scorer_result = run_scorer_workflow(
                             resume_analysis=analyzer_result['analysis_result'],
                             job_description=job_description,
                             job_requirements=job_requirements,
-                            job_id=job_id
+                            job_id=job_id,
+                            instructions_text=instructions_text
                         )
                         
                         # Extract AI score and detailed breakdown
@@ -903,9 +997,8 @@ def create_applicant():
         
         print(f"📝 Final AI Score to save: {ai_score}")
         
-        # New applicants always start with "New" status
-        # No "New" status anymore - all applicants get a real status immediately
-        final_status = data.get('status') or 'Under Review'
+        # New applicants start with "Pending Analysis" status until AI analysis completes
+        final_status = data.get('status') or 'Pending Analysis'
         
         insert_cursor = connection.cursor()
         applicant_id = str(uuid.uuid4())
@@ -1153,6 +1246,7 @@ def upload_resume():
         if r2_storage.is_configured():
             result = r2_storage.upload_file(file, unique_filename, content_type)
             if result['success']:
+                print(f"☁️  File uploaded to R2: {unique_filename}")
                 return jsonify({
                     'message': 'File uploaded successfully to R2',
                     'filename': filename,
@@ -1160,20 +1254,17 @@ def upload_resume():
                     'url': result.get('url', '')
                 }), 200
             else:
-                # Fallback to local storage if R2 upload fails
-                print(f"⚠️ R2 upload failed: {result.get('error')}, falling back to local storage")
-                file.seek(0)  # Reset file pointer
-                file_path = os.path.join(UPLOAD_FOLDER, unique_filename)
-                file.save(file_path)
+                # R2 is configured but upload failed - return error, no local fallback
+                print(f"❌ R2 upload failed: {result.get('error')}")
                 return jsonify({
-                    'message': 'File uploaded successfully (local storage)',
-                    'filename': filename,
-                    'file_path': unique_filename
-                }), 200
+                    'error': f"Failed to upload to cloud storage: {result.get('error')}"
+                }), 500
         else:
-            # Save locally if R2 not configured
+            # Save locally only if R2 is not configured
+            os.makedirs(UPLOAD_FOLDER, exist_ok=True)
             file_path = os.path.join(UPLOAD_FOLDER, unique_filename)
             file.save(file_path)
+            print(f"📁 File saved locally: {unique_filename}")
             return jsonify({
                 'message': 'File uploaded successfully',
                 'filename': filename,
@@ -1271,38 +1362,42 @@ def reanalyze_applicant(applicant_id):
             }), 500
         
         # Run scorer workflow
+        user_id = applicant.get('user_id')
+        # Get instructions_text from settings
+        instructions_text = get_instructions_text(user_id) if user_id else ''
+        has_custom_instructions = bool(instructions_text and instructions_text.strip())
         scorer_result = run_scorer_workflow(
             resume_analysis=analyzer_result['analysis_result'],
             job_description=job_description,
             job_requirements=job_requirements,
-            job_id=job_id
+            job_id=job_id,
+            instructions_text=instructions_text
         )
         
         ai_score = scorer_result.get('ai_score', 0)
         
         # Auto-update status based on new AI score
         # Status updates immediately based on AI score (no 24-hour delay)
-        user_id = applicant.get('user_id')
         threshold = get_ai_score_threshold(user_id) if user_id else 70
         current_status = applicant.get('status', 'New')
         
-        # Determine status based on AI score
-        # Only update if applicant has an AI score (has been analyzed)
+        # Determine status based on AI score with clear logic
+        # If there are custom instructions, any positive score below the threshold
+        # becomes "Needs Review" (para alam mong i-review yung borderline cases).
+        # Kapag walang instructions, low scores should simply be "Not Qualified".
         if ai_score > 0:
             if ai_score >= 90:
-                new_status = 'Ready to Hire'  # Excellent match
+                new_status = 'Highly Qualified'  # Excellent match (90-100): Top candidate, meets all requirements
             elif ai_score >= threshold:
-                new_status = 'AI Shortlisted'  # Passed threshold
-            elif ai_score >= 50:
-                new_status = 'Under Review'  # Moderate match
+                new_status = 'Qualified'  # Good match (threshold-89): Meets requirements, good fit
             else:
-                new_status = 'Rejected'  # Weak match
+                new_status = 'Needs Review' if has_custom_instructions else 'Not Qualified'
         else:
-            # If no AI score yet (not analyzed), set to "Under Review" (no "New" status)
-            new_status = 'Under Review'
+            # If no AI score yet (not analyzed) or 0 score, mark as Not Qualified
+            new_status = 'Not Qualified'
         
         # Only update if current status is NOT a manual status
-        manual_statuses = ['Shortlisted', 'Hired']
+        manual_statuses = ['Shortlisted', 'Rejected', 'Hired']
         if current_status in manual_statuses:
             # Keep manual statuses unchanged
             new_status = current_status
@@ -1353,9 +1448,9 @@ def analyze_resume():
         return jsonify({'error': 'Database connection failed'}), 500
     
     try:
-        # Get job details
+        # Get job details including user_id
         cursor = connection.cursor(cursor_factory=extras.RealDictCursor)
-        cursor.execute('SELECT description, required_skills FROM jobs WHERE id = %s', (job_id,))
+        cursor.execute('SELECT description, required_skills, user_id FROM jobs WHERE id = %s', (job_id,))
         job = cursor.fetchone()
         cursor.close()
         
@@ -1364,6 +1459,7 @@ def analyze_resume():
         
         job_description = job.get('description', '') or ''
         job_requirements = job.get('required_skills', '') or ''
+        user_id = job.get('user_id')
         
         # Step 1: Run Resume Analyzer Workflow
         full_resume_path = get_file_path(resume_path)
@@ -1384,11 +1480,14 @@ def analyze_resume():
             }), 500
         
         # Step 2: Run Resume Scorer Workflow
+        # Get instructions_text from settings
+        instructions_text = get_instructions_text(user_id) if user_id else ''
         scorer_result = run_scorer_workflow(
             resume_analysis=analyzer_result['analysis_result'],
             job_description=job_description,
             job_requirements=job_requirements,
-            job_id=job_id
+            job_id=job_id,
+            instructions_text=instructions_text
         )
         
         ai_score = scorer_result.get('ai_score', 0)
@@ -1428,9 +1527,9 @@ def get_settings():
             # Create default settings if doesn't exist
             settings_id = str(uuid.uuid4())
             cursor.execute("""
-                INSERT INTO settings (id, user_id, ai_score_threshold)
-                VALUES (%s, %s, %s)
-            """, (settings_id, user_id, 70))
+                INSERT INTO settings (id, user_id, ai_score_threshold, instructions_text)
+                VALUES (%s, %s, %s, %s)
+            """, (settings_id, user_id, 70, ''))
             connection.commit()
             
             cursor.execute('SELECT * FROM settings WHERE user_id = %s', (user_id,))
@@ -1446,13 +1545,14 @@ def get_settings():
 
 @app.route('/api/settings', methods=['PUT'])
 def update_settings():
-    """Update user settings, specifically AI score threshold."""
+    """Update user settings, including AI score threshold and instructions text."""
     user_id = get_user_id()
     if not user_id:
         return jsonify({'error': 'User ID required'}), 401
     
     data = request.json
     ai_score_threshold = data.get('ai_score_threshold')
+    instructions_text = data.get('instructions_text', '')
     
     if ai_score_threshold is None:
         return jsonify({'error': 'ai_score_threshold is required'}), 400
@@ -1476,16 +1576,16 @@ def update_settings():
             # Update existing settings
             cursor.execute("""
                 UPDATE settings 
-                SET ai_score_threshold = %s, updated_at = CURRENT_TIMESTAMP
+                SET ai_score_threshold = %s, instructions_text = %s, updated_at = CURRENT_TIMESTAMP
                 WHERE user_id = %s
-            """, (ai_score_threshold, user_id))
+            """, (ai_score_threshold, instructions_text, user_id))
         else:
             # Create new settings
             settings_id = str(uuid.uuid4())
             cursor.execute("""
-                INSERT INTO settings (id, user_id, ai_score_threshold)
-                VALUES (%s, %s, %s)
-            """, (settings_id, user_id, ai_score_threshold))
+                INSERT INTO settings (id, user_id, ai_score_threshold, instructions_text)
+                VALUES (%s, %s, %s, %s)
+            """, (settings_id, user_id, ai_score_threshold, instructions_text))
         
         connection.commit()
         

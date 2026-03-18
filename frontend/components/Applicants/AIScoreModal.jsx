@@ -340,49 +340,11 @@ export const AIScoreModal = ({ isOpen, onClose, applicant, scoreBreakdown, resum
                     </div>
                     
                     <div className="prose prose-sm max-w-none">
-                      <div className="text-sm text-slate-700 leading-relaxed space-y-3">
-                        {breakdown.breakdown.explanation.split('. ').filter(part => part.trim()).map((sentence, idx) => {
-                          // Format the explanation with proper styling
-                          const isSuccess = sentence.includes('✅') || sentence.includes('🎯');
-                          const isWarning = sentence.includes('⚠️') || sentence.includes('📋');
-                          const isError = sentence.includes('❌');
-                          const isInfo = sentence.includes('ℹ️') || sentence.includes('📊') || sentence.includes('💡');
-                          
-                          let bgColor = 'bg-white';
-                          let borderColor = 'border-slate-200';
-                          let textColor = 'text-slate-700';
-                          
-                          if (isSuccess) {
-                            bgColor = 'bg-emerald-50';
-                            borderColor = 'border-emerald-200';
-                            textColor = 'text-emerald-900';
-                          } else if (isWarning) {
-                            bgColor = 'bg-amber-50';
-                            borderColor = 'border-amber-200';
-                            textColor = 'text-amber-900';
-                          } else if (isError) {
-                            bgColor = 'bg-red-50';
-                            borderColor = 'border-red-200';
-                            textColor = 'text-red-900';
-                          } else if (isInfo) {
-                            bgColor = 'bg-blue-50';
-                            borderColor = 'border-blue-200';
-                            textColor = 'text-blue-900';
-                          }
-                          
-                          return (
-                            <div
-                              key={idx}
-                              className={`${bgColor} ${borderColor} border-l-4 p-3 rounded-r-lg ${textColor}`}
-                            >
-                              <p className="font-medium m-0">
-                                {sentence.replace(/✅|⚠️|❌|ℹ️|📊|🎯|💡/g, '').trim()}
-                                {idx < breakdown.breakdown.explanation.split('. ').filter(part => part.trim()).length - 1 ? '.' : ''}
-                              </p>
-                            </div>
-                          );
-                        })}
-                      </div>
+                      <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-line">
+                        {breakdown.breakdown.explanation
+                          .replace(/✅|⚠️|❌|ℹ️|📊|🎯|💡|📝/g, '')
+                          .trim()}
+                      </p>
                     </div>
                     
                     {/* Additional Details */}

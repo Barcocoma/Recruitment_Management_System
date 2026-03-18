@@ -84,11 +84,14 @@ export const ApplicantTable = ({ applicants, filter, onRefresh, aiScoreThreshold
         return true;
       }
       if (filter === 'shortlisted') {
-        // "AI Shortlisted" filter shows applicants with AI score >= threshold
-        // OR manually shortlisted statuses (regardless of AI score)
+        // "AI Shortlisted" filter shows:
+        // 1) AI score >= threshold (normal qualified)
+        // 2) Qualified / Highly Qualified / Shortlisted statuses
+        // 3) Needs Review BUT has any AI score > 0 (meaning: low score but has some skills / analysis)
         const aiScore = a.ai_score !== undefined ? a.ai_score : (a.aiScore !== undefined ? a.aiScore : 0);
-        const isShortlistedStatus = ['Shortlisted', 'AI Shortlisted', 'Ready to Hire', 'Under Review'].includes(a.status);
-        return aiScore >= aiScoreThreshold || isShortlistedStatus;
+        const isQualifiedStatus = ['Qualified', 'Highly Qualified', 'Shortlisted'].includes(a.status);
+        const isNeedsReviewWithAI = a.status === 'Needs Review' && aiScore > 0;
+        return aiScore >= aiScoreThreshold || isQualifiedStatus || isNeedsReviewWithAI;
       }
       if (filter === 'total') {
         // "Total Applicants" filter shows ALL applicants (no status filter)
@@ -308,10 +311,11 @@ export const ApplicantTable = ({ applicants, filter, onRefresh, aiScoreThreshold
                     <div className="flex items-center gap-2">
                       <div className={cn(
                         "w-2 h-2 rounded-full",
-                        applicant.status === 'Ready to Hire' || applicant.status === 'Hired' ? "bg-emerald-500" : 
-                        applicant.status === 'Shortlisted' || applicant.status === 'AI Shortlisted' ? "bg-blue-500" :
-                        applicant.status === 'Under Review' ? "bg-amber-500" :
-                        applicant.status === 'Rejected' ? "bg-red-500" :
+                        applicant.status === 'Highly Qualified' || applicant.status === 'Hired' ? "bg-emerald-500" : 
+                        applicant.status === 'Qualified' || applicant.status === 'Shortlisted' ? "bg-blue-500" :
+                        applicant.status === 'Needs Review' ? "bg-amber-500" :
+                        applicant.status === 'Not Qualified' || applicant.status === 'Rejected' ? "bg-red-500" :
+                        applicant.status === 'Pending Analysis' ? "bg-slate-400" :
                         "bg-slate-400"
                       )}></div>
                       <span className="text-sm font-medium text-slate-700">{applicant.status}</span>

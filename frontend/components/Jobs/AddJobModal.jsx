@@ -8,11 +8,39 @@ export const AddJobModal = ({ isOpen, onClose, onSubmit, editingJob }) => {
 
   React.useEffect(() => {
     if (isEditMode && formRef.current && editingJob) {
+      // Map database field names to form field names
+      const fieldMapping = {
+        'experience_level': 'experience',
+        'salary_range': 'salary_range',
+        'required_skills': 'required_skills',
+        'application_deadline': 'application_deadline',
+        'special_instructions': 'special_instructions',
+        'title': 'title',
+        'description': 'description',
+        'location': 'location',
+        'type': 'type',
+      };
+
       // Populate form with editing job data
       Object.keys(editingJob).forEach(key => {
-        const input = formRef.current.querySelector(`[name="${key}"]`);
+        const formFieldName = fieldMapping[key] || key;
+        const input = formRef.current.querySelector(`[name="${formFieldName}"]`);
         if (input) {
-          input.value = editingJob[key] || '';
+          let value = editingJob[key] || '';
+          
+          // Handle date fields - format to YYYY-MM-DD for date input
+          if (key === 'application_deadline' && value) {
+            try {
+              const date = new Date(value);
+              if (!isNaN(date.getTime())) {
+                value = date.toISOString().split('T')[0];
+              }
+            } catch (e) {
+              console.error('Error formatting date:', e);
+            }
+          }
+          
+          input.value = value;
         }
       });
     } else if (formRef.current) {
@@ -65,8 +93,7 @@ export const AddJobModal = ({ isOpen, onClose, onSubmit, editingJob }) => {
                   <div className="relative">
                     <select 
                       name="experience" 
-                      required 
-                      defaultValue="" 
+                      required
                       className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 bg-white cursor-pointer appearance-none hover:border-indigo-300 transition-colors"
                     >
                       <option value="">Select experience level</option>
@@ -84,8 +111,7 @@ export const AddJobModal = ({ isOpen, onClose, onSubmit, editingJob }) => {
                   <div className="relative">
                     <select 
                       name="type" 
-                      required 
-                      defaultValue="" 
+                      required
                       className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 bg-white cursor-pointer appearance-none hover:border-indigo-300 transition-colors"
                     >
                       <option value="">Select employment type</option>
