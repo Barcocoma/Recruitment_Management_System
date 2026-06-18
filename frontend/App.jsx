@@ -168,19 +168,12 @@ export default function App() {
     }
   };
 
-  // Load data on mount
-  useEffect(() => {
-    if (authState === 'authenticated') {
-      loadData();
-    }
-  }, [authState]);
-
-  // Reload applicants when filter changes
+  // Load dashboard data when authenticated or when applicant filter changes
   useEffect(() => {
     if (authState === 'authenticated') {
       loadData(applicantFilter);
     }
-  }, [applicantFilter]);
+  }, [authState, applicantFilter]);
 
   const handleSettingsUpdate = () => {
     // Reload settings and stats when settings are updated
@@ -209,9 +202,6 @@ export default function App() {
       
       setAuthState('authenticated');
       localStorage.setItem('authState', 'authenticated');
-      
-      // Reload data for the new user
-      await loadData();
     } catch (error) {
       alert(error.message);
       // Clear any partial data on error
