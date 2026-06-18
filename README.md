@@ -1,3 +1,8 @@
+<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/c7124c07-2ee7-47ac-924d-b192811dc7e9" />
+
+<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/4ad3f75a-91fd-41ad-a7ee-0ee7147a0671" />
+
+
 # Recruitment Management System (SprintHR)
 
 A full-stack HR recruitment platform that helps teams post jobs, collect applications, and automatically score applicants using AI.
