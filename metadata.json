@@ -1,5 +1,15 @@
 {
   "name": "SprintHR",
   "description": "A modern HR management system with AI-driven applicant shortlisting and job tracking.",
-  "requestFramePermissions": []
+  "requestFramePermissions": [],
+  "experimentalServices": {
+    "frontend": {
+      "routePrefix": "/",
+      "framework": "vite"
+    },
+    "backend": {
+      "root": "backend",
+      "routePrefix": "/_/backend"
+    }
+  }
 }
