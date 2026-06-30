@@ -182,7 +182,7 @@ export const AIScoreModal = ({ isOpen, onClose, applicant, scoreBreakdown, resum
                         </div>
                       )}
                     </div>
-
+                      
                     {/* Experience */}
                     <div className="bg-white border-2 border-slate-200 rounded-lg p-6 shadow-sm">
                       <div className="flex items-center justify-between mb-4">
